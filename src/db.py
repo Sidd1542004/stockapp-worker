@@ -1,9 +1,11 @@
 """
 Supabase writes for the stocks table.
 
-We use the SERVICE ROLE key here — it bypasses row-level security so the
-worker can freely UPDATE the shared stocks table. Guard this key like a
-password: it grants full database access.
+Batch A update: the upsert payload now includes asset_type ("stock", "etf",
+"crypto") so the UI can adapt for assets without traditional fundamentals.
+
+Uses the SERVICE ROLE key — it bypasses row-level security so the worker can
+freely write the shared stocks table. Guard this key like a password.
 """
 
 from __future__ import annotations
@@ -32,13 +34,11 @@ def _client() -> Client:
 
 def upsert_stocks(quotes: list[dict]) -> int:
     """
-    Upsert the given quotes into the `stocks` table.
+    Upsert price + fundamentals + asset_type into the `stocks` table.
 
-    Each quote must contain: symbol, current_price, day_change_pct.
-    Metadata (name, exchange, sector) is enriched from the universe so that
-    rows can be INSERTED cleanly if they don't yet exist.
-
-    Returns the number of rows written.
+    Metadata (name, exchange, sector, asset_type) is enriched from the universe
+    so rows can be cleanly inserted if they don't yet exist. Returns rows
+    written.
     """
     if not quotes:
         return 0
@@ -56,13 +56,16 @@ def upsert_stocks(quotes: list[dict]) -> int:
             "name": meta["name"],
             "exchange": meta["exchange"],
             "sector": meta["sector"],
+            "asset_type": meta.get("asset_type", "stock"),
             "current_price": q["current_price"],
             "day_change_pct": q["day_change_pct"],
+            "market_cap": q.get("market_cap"),
+            "pe_ratio": q.get("pe_ratio"),
+            "dividend_yield": q.get("dividend_yield"),
             "updated_at": now_iso,
         })
 
     log.info("Upserting %d rows to Supabase", len(payload))
     client = _client()
-    # on_conflict=symbol → INSERT if new, UPDATE if it already exists
     client.table("stocks").upsert(payload, on_conflict="symbol").execute()
     return len(payload)
