@@ -1,14 +1,19 @@
 """
 StockApp market data worker — entry point.
 
+Batch B update: after updating prices, the worker also checks price alerts and
+emails users whose thresholds were crossed. No separate scheduler needed — it
+piggybacks on the existing 30-minute price run.
+
 Usage:
   python -m src.main              # Single run (used by GitHub Actions)
   python -m src.main --loop       # Run forever, sleeping between iterations
-  python -m src.main --loop --interval 900   # every 15 minutes
 
-Environment variables (.env or GitHub Secrets):
+Environment variables:
   SUPABASE_URL                — your project URL
   SUPABASE_SERVICE_ROLE_KEY   — secret key with full DB access
+  RESEND_API_KEY              — (optional) enables price-alert emails
+  ALERT_FROM_EMAIL            — (optional) verified sender, else resend.dev
 """
 
 from __future__ import annotations
@@ -20,6 +25,7 @@ import time
 
 from dotenv import load_dotenv
 
+from .alerts import check_alerts
 from .db import upsert_stocks
 from .fetcher import fetch_quotes
 from .universe import SYMBOLS
@@ -35,7 +41,18 @@ def run_once() -> None:
     log.info("Starting run: %d symbols in universe", len(SYMBOLS))
     quotes = fetch_quotes(SYMBOLS)
     written = upsert_stocks(quotes)
-    log.info("Run complete: wrote %d rows", written)
+    log.info("Prices written: %d rows", written)
+
+    # Check price alerts against the freshly written prices.
+    try:
+        triggered = check_alerts()
+        if triggered:
+            log.info("Alerts triggered: %d", triggered)
+    except Exception as e:  # noqa: BLE001
+        # Never let alert failures break the price pipeline.
+        log.exception("Alert check failed: %s", e)
+
+    log.info("Run complete")
 
 
 def main() -> int:
