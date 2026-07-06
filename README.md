@@ -1,207 +1,307 @@
-# StockApp — Phase 2: Market Data Worker
+# StockApp
 
-A tiny Python service that fetches stock prices from Yahoo Finance and
-writes them to the same Supabase database your Phase 1 Next.js app reads
-from. As soon as this worker is running, your dashboard will show live
-prices with **zero changes** to the Next.js code.
+An all-in-one stock platform for both beginners and pros — covering global
+markets (US + India), ETFs, and crypto. Research, paper trade, learn, compete,
+and get AI-powered insights. Built entirely on **free-tier** services.
 
-**Deploys free via GitHub Actions — no server needed.**
-
----
-
-## What Phase 2 adds
-
-- 60-stock universe (30 US + 30 India, easily extensible in `src/universe.py`)
-- Batch fetching via `yfinance` — one HTTP request per run for the entire universe
-- Upsert into your existing `stocks` table (both INSERT new rows and UPDATE existing)
-- Runs every 30 minutes via GitHub Actions (free, no infra)
-- Also runnable locally in loop mode for development
-
-## What Phase 2 does NOT add
-
-- Historical price data (Phase 3 — needed for charts)
-- Real-time streaming (Phase 3 uses Supabase Realtime to push updates to the UI)
-- Fundamentals (P/E, market cap, dividends) — Phase 3
-- News — Phase 6
+> **Educational paper-trading platform. Not financial advice. It does not
+> execute real trades, and market data may be delayed.**
 
 ---
 
-## Prerequisites
+## Table of contents
 
-- **Python 3.11+** (`python --version` to check)
-- A Supabase project from Phase 1 with the `stocks` table already created
-- A GitHub account (for the free scheduler)
+- [Overview](#overview)
+- [Features](#features)
+- [Architecture](#architecture)
+- [The two projects](#the-two-projects)
+- [Tech stack](#tech-stack)
+- [Getting started](#getting-started)
+- [Environment variables](#environment-variables)
+- [Database setup](#database-setup)
+- [Running day to day](#running-day-to-day)
+- [Deployment](#deployment)
+- [Security & privacy](#security--privacy)
+- [Common gotchas](#common-gotchas)
+- [Roadmap ideas](#roadmap-ideas)
 
 ---
 
-## Local setup — test it in 5 minutes
+## Overview
 
-### 1. Install
+StockApp is a two-part system:
+
+1. **stockapp-web** — a Next.js web app: the entire user experience (landing
+   page, auth, dashboard, screener, trading, learning, AI, and more).
+2. **stockapp-worker** — a small Python service that keeps prices fresh and
+   sends price-alert emails, running free on GitHub Actions every 30 minutes.
+
+The two never talk directly — they connect only through a shared **Supabase**
+database. The worker writes prices; the web app reads them. That clean
+separation means you can run, restart, or redeploy either independently.
+
+The whole thing runs on free tiers: Supabase, Vercel, GitHub Actions, Groq
+(AI), Finnhub (news), and Resend (email). No paid services required.
+
+---
+
+## Features
+
+**Market data & research**
+- Live-ish prices for stocks, ETFs, and crypto (US + Indian markets)
+- Stock detail pages with candlestick charts (1M–5Y) and key fundamentals
+- Peer comparison table with a search bar to compare against any asset
+- Screener — filter by sector, valuation, yield, market cap, momentum
+- Natural-language screener — "cheap dividend stocks" → real results (AI)
+- Sector heatmap — every sector color-coded by today's move
+- Market news feed (Finnhub)
+
+**Paper trading**
+- Per-user $100,000 virtual portfolio, tracked in your own database
+- Market buy/sell orders that fill instantly at the latest price
+- Holdings with live P&L; portfolio analytics (allocation, best/worst)
+- Atomic trade execution via a Postgres function (no race conditions)
+
+**Engagement**
+- Watchlists with realtime price updates; shareable via public link
+- Price alerts — email when a symbol crosses your target
+- Leaderboard — ranks paper-trading returns across users (privacy-safe)
+- Settings — leaderboard username / opt-out
+
+**Learning & onboarding**
+- "Learn" tab: plain-English lessons + a "Discover" panel of preset screens
+- Tap-to-learn tooltips on fundamentals
+- Dedicated onboarding page after signup, with activity-based progress
+
+**AI (via Groq — free tier)**
+- Explain a stock in plain English
+- AI-generated pros & cons
+- Portfolio risk summary
+- Natural-language screener
+
+All AI output carries a clear "not financial advice" disclaimer.
+
+**Landing page**
+- Professional dark "market terminal" landing page with a live ticker and a
+  live screener preview pulled from real data.
+
+---
+
+## Architecture
+
+```
+                    ┌──────────────────────────┐
+   Yahoo Finance ──►│   stockapp-worker (Py)   │
+                    │  every 30 min via GH      │
+                    │  Actions:                 │
+                    │   • fetch prices + funda  │
+                    │   • write to Supabase     │
+                    │   • check alerts, email   │
+                    └───────────┬──────────────┘
+                                │ writes
+                                ▼
+                    ┌──────────────────────────┐
+                    │        Supabase          │
+                    │  Postgres + Auth + RLS    │
+                    │  + Realtime               │
+                    └───────────┬──────────────┘
+                                │ reads
+                                ▼
+   Users  ◄────────►  ┌──────────────────────────┐  ◄──► Groq (AI)
+                      │   stockapp-web (Next.js) │  ◄──► Finnhub (news)
+                      │   on Vercel               │
+                      └──────────────────────────┘
+```
+
+---
+
+## The two projects
+
+| | stockapp-web | stockapp-worker |
+|---|---|---|
+| **What** | The web app / UI | Data + alerts service |
+| **Language** | TypeScript (Next.js) | Python |
+| **Runs on** | Vercel | GitHub Actions (cron) |
+| **Env vars in** | Vercel settings | GitHub Secrets |
+| **Talks to** | Supabase, Groq, Finnhub | Supabase, Yahoo, Resend |
+
+Each project has its own detailed README. This file is the overview.
+
+---
+
+## Tech stack
+
+- **Next.js 16** (App Router) + **TypeScript** + **Tailwind CSS**
+- **Supabase** — Postgres, auth, row-level security, realtime
+- **TradingView Lightweight Charts v5** — candlestick charts
+- **Python 3.11** + **yfinance** — the data worker
+- **Groq** — AI (free tier, OpenAI-compatible)
+- **Finnhub** — news · **Resend** — alert emails
+- **Vercel** (web) + **GitHub Actions** (worker) — hosting, free
+
+---
+
+## Getting started
+
+You need free accounts on: **GitHub**, **Supabase**, **Vercel**, and
+(optional but recommended) **Groq**, **Finnhub**, and **Resend**.
+
+### 1. Web app
+
+```bash
+cd stockapp-web
+npm install
+cp .env.local.example .env.local     # fill in your keys (see below)
+npm run dev
+```
+
+Open http://localhost:3000.
+
+### 2. Worker
 
 ```bash
 cd stockapp-worker
 python -m venv .venv
-source .venv/bin/activate      # Windows: .venv\Scripts\activate
+source .venv/bin/activate             # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
+cp .env.example .env                   # fill in your keys
+python -m src.main                     # one run: fetch + write + check alerts
 ```
 
-### 2. Get your service role key
+---
 
-In the Supabase dashboard: **Project Settings → API**.
-You'll see two keys — `anon` (which your Next.js app uses) and
-`service_role` (which the worker uses). Copy the **service_role** one.
+## Environment variables
 
-> ⚠️ The service role key bypasses row-level security. Treat it like a
-> password. It goes in `.env` (gitignored) and GitHub Secrets — never
-> commit it, never put it in your Next.js code, never share it.
+**Web app** (`stockapp-web/.env.local`, and Vercel project settings):
 
-### 3. Configure environment
-
-```bash
-cp .env.example .env
+```
+NEXT_PUBLIC_SUPABASE_URL=https://your-project-ref.supabase.co
+NEXT_PUBLIC_SUPABASE_ANON_KEY=your-anon-public-key
+GROQ_API_KEY=your-groq-key             # AI features
+FINNHUB_API_KEY=your-finnhub-key       # market news
 ```
 
-Edit `.env`:
+**Worker** (`stockapp-worker/.env`, and GitHub Secrets):
 
 ```
 SUPABASE_URL=https://your-project-ref.supabase.co
-SUPABASE_SERVICE_ROLE_KEY=eyJhbGciOi...(the service_role key)
+SUPABASE_SERVICE_ROLE_KEY=your-service-role-secret-key
+RESEND_API_KEY=your-resend-key         # optional: alert emails
+ALERT_FROM_EMAIL=StockApp <onboarding@resend.dev>
 ```
 
-### 4. Run it once
+If a key is missing, that feature degrades gracefully (AI shows "AI is off",
+news shows a note, alerts save without emailing) — nothing crashes.
+
+> ⚠️ The **service role key** bypasses row-level security. Keep it only in the
+> worker's `.env` (gitignored) and GitHub Secrets — never in the web app, never
+> committed. Never commit any `.env` file.
+
+---
+
+## Database setup
+
+Run these SQL files in the Supabase SQL Editor, in order (all idempotent):
+
+1. `schema.sql` — core tables (stocks, watchlists) + RLS
+2. `phase3-migration.sql` — realtime + default watchlist trigger
+3. `phase4-migration.sql` — portfolios, positions, orders + trade function
+4. `phase5-migration.sql` — fundamental columns for screening
+5. `phase6-migration.sql` — onboarding
+6. `batchA-migration.sql` — asset_type (ETF/crypto) columns
+7. `batchB-migration.sql` — profiles, alerts, sharing, leaderboard
+8. `landing-anon-read.sql` — lets the public landing page read live prices
+
+---
+
+## Running day to day
+
+Most of the time you're just working on the web app:
 
 ```bash
-python -m src.main
+cd stockapp-web
+npm run dev
 ```
 
-You should see output like:
+Prices stay fresh automatically — the worker runs in the cloud every 30
+minutes. You only run the worker locally to force a refresh or test changes.
 
-```
-INFO worker: Starting run: 60 symbols in universe
-INFO src.fetcher: Downloading quotes for 60 symbols
-[*********************100%***********************]  60 of 60 completed
-INFO src.fetcher: Successfully fetched 60 / 60 quotes
-INFO src.db: Upserting 60 rows to Supabase
-INFO worker: Run complete: wrote 60 rows
-```
-
-Now open your Next.js app dashboard — you should see 60 stocks with
-fresh prices instead of the 10 hardcoded ones. 🎉
-
-### 5. (Optional) Run in a loop
-
-For development, you can keep it running locally:
-
-```bash
-python -m src.main --loop --interval 900   # every 15 minutes
-```
-
-But for production, GitHub Actions is the right answer — no need to leave
-your laptop on.
+| Task | Folder | Command |
+|---|---|---|
+| Web dev | stockapp-web | `npm run dev` |
+| After dep changes | stockapp-web | `npm install` then `npm run dev` |
+| Force a price update | stockapp-worker | `.venv\Scripts\python -m src.main` |
 
 ---
 
-## Deploy via GitHub Actions (production)
+## Deployment
 
-This is the free scheduler. Every 30 min, GitHub spins up an Ubuntu VM,
-installs deps, runs the worker, and shuts down. You pay nothing.
+**Web app → Vercel.** Push `stockapp-web` to GitHub, import it on Vercel, add
+all the `.env.local` variables under the project's Environment Variables, and
+deploy. Every push to `main` auto-deploys.
 
-### 1. Push the worker to GitHub
-
-```bash
-cd stockapp-worker
-git init
-git add .
-git commit -m "Phase 2: market data worker"
-git branch -M main
-git remote add origin https://github.com/YOUR_USERNAME/stockapp-worker.git
-git push -u origin main
-```
-
-> **Recommendation:** make this repo **public**. Public repos get
-> UNLIMITED GitHub Actions minutes. Private repos are limited to 2,000
-> minutes/month on the free plan, and at every 30 min that's tight.
-
-### 2. Add the two secrets
-
-In the GitHub repo: **Settings → Secrets and variables → Actions →
-New repository secret**.
-
-Add two secrets with these exact names:
-
-| Name                          | Value                                    |
-|-------------------------------|------------------------------------------|
-| `SUPABASE_URL`                | Your Supabase project URL                |
-| `SUPABASE_SERVICE_ROLE_KEY`   | The `service_role` key (NOT the anon)    |
-
-### 3. Trigger the first run
-
-Go to **Actions → Update stock quotes → Run workflow → Run**.
-Watch the logs — after ~1 minute you should see 60 stocks upserted.
-
-From then on, it runs itself every 30 minutes.
+**Worker → GitHub Actions.** Push `stockapp-worker` to a **public** repo (for
+unlimited Actions minutes), add the secrets under Settings → Secrets → Actions,
+and trigger the first run from the Actions tab. It then runs every 30 minutes.
 
 ---
 
-## Adding more stocks to the universe
+## Security & privacy
 
-Edit `src/universe.py` and append entries. Symbol conventions:
-
-| Exchange   | Format             | Example         |
-|------------|--------------------|-----------------|
-| US NASDAQ  | plain ticker       | `AAPL`, `NVDA`  |
-| US NYSE    | plain ticker       | `JPM`, `V`      |
-| India NSE  | `.NS` suffix       | `RELIANCE.NS`   |
-| India BSE  | `.BO` suffix       | `RELIANCE.BO`   |
-| UK LSE     | `.L` suffix        | `HSBA.L`        |
-| Japan TSE  | `.T` suffix        | `7203.T`        |
-
-Commit, push, and the next scheduled run will pick them up automatically.
-
----
-
-## Troubleshooting
-
-**"Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY"** — your `.env`
-isn't being read. Make sure you're running from the `stockapp-worker`
-directory and `.env` exists there.
-
-**"insert or update on table 'stocks' violates row-level security"** — you
-used the anon key instead of the service_role key. Get the service_role
-key from Supabase (it's the second, "secret" one).
-
-**"YFRateLimitError"** — Yahoo has temporarily rate-limited your IP. Wait
-15 minutes and try again. If it persists, reduce the universe size or
-run less frequently.
-
-**GitHub Actions cron isn't firing on time** — GitHub's cron is
-best-effort and often delays free-tier jobs by 5–15 minutes during peak
-load. This is normal. If it stops entirely, check for a GitHub Actions
-outage.
+- **Row-level security** on all user tables — users see only their own
+  portfolios, positions, orders, watchlists, and alerts.
+- **Leaderboard** exposes only username + return %, via a SECURITY DEFINER
+  function. Holdings are never readable by other users.
+- **Shared watchlists** return only the list name and symbols — never the
+  owner's identity.
+- **Public landing page** can read only the `stocks` table (public market
+  data); everything else stays private.
+- **AI** prompts forbid buy/sell recommendations; every output is disclaimed.
+- This is a **paper-trading** app. Real execution would require a licensed
+  broker integration and the appropriate financial licenses.
 
 ---
 
-## Testing checklist for Phase 2
+## Common gotchas
 
-- [ ] `python -m src.main` runs locally without errors
-- [ ] After running, Next.js dashboard shows 60 stocks (not 10)
-- [ ] Stock prices in the dashboard match roughly what Yahoo Finance shows
-- [ ] `updated_at` in the `stocks` table is a recent timestamp
-- [ ] GitHub Actions workflow completes successfully when triggered manually
-- [ ] Workflow runs automatically on the next 30-min mark
-
-All six passing = Phase 2 complete. Phase 3 will add historical price
-charts, a Supabase Realtime subscription for live UI updates, and the
-watchlist add/remove UI.
+- **Supabase free tier pauses** after 7 days of no activity. If the app throws
+  DB errors after a break, open the Supabase dashboard once to wake it.
+- **Turbopack stale cache** — after adding a file you may see a false "module
+  not found". Stop the server, delete `.next`
+  (`Remove-Item -Recurse -Force .next` in PowerShell), and `npm run dev`.
+- **`middleware.ts` deprecation** on Next 16 — rename it to `proxy.ts` (no code
+  changes) to silence the warning.
+- **Symbols change** — companies get renamed/demerged/delisted. The worker
+  skips a failing symbol instead of crashing; update it in `universe.py`.
+- **Groq model changes** — if AI calls fail with a model error, update the one
+  `MODEL` constant in `src/lib/groq.ts` to a current model from
+  https://console.groq.com/docs/models.
+- **Vercel env vars** — set them in Vercel; `.env.local` is local only.
 
 ---
 
-## Alternative deployment options (if you outgrow GitHub Actions)
+## Roadmap ideas
 
-- **Railway** — $5/month free credit, always-on background worker
-- **Fly.io** — free tier with a small always-on VM
-- **Supabase Edge Functions + pg_cron** — everything in one place; steeper learning curve
-- **Render Cron Jobs** — free tier available with limitations
+Honest, high-value next steps (none require paid services):
 
-For MVP scale (up to a few thousand users), GitHub Actions is more than
-enough.
+- **Expected range / volatility** — "this stock typically moves ±2.4% a day"
+  (sound, teaches risk — unlike unreliable price prediction).
+- **Technical indicators** (RSI, moving averages) — unlocks crossover/RSI
+  screens; the worker would compute and store them from price history.
+- **Light/dark toggle**, **limit orders + order history**, **mobile polish**.
+- **Custom email domain** for alerts; **re-enable email confirmation** on signup.
+- **Error monitoring** (Sentry free tier); **rate limiting** on AI endpoints.
+- **Beta launch** to 10–20 real users for feedback before building more.
+
+The single highest-value step is getting it in front of real people — you'll
+learn more from that than from any additional feature.
+
+---
+
+## Credits
+
+Built iteratively across six phases plus two feature batches and several
+refinements: foundation & auth → market data → charts & watchlists → paper
+trading → screener & analytics → learn/news/onboarding → data & discovery
+(ETFs, crypto, peers, heatmap) → engagement & AI (leaderboard, sharing, alerts,
+Groq) → landing page. All on free-tier infrastructure.
